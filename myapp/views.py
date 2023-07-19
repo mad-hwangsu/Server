@@ -29,7 +29,7 @@ def chat_view(request):
 
 
 def generate_text(prompt):
-    openai.api_key = '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'
+    openai.api_key = ' '
 
     response = requests.post(
      "https://api.openai.com/v1/chat/completions",
