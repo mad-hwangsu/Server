@@ -2,6 +2,9 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    #path('checkwrong/', views.checkwrong_view, name='checkwrong'),
+    path('rank/', views.rank_view, name='rank'),
+    path('wrong/', views.wrong_view, name='wrong'),
     path('submit/', views.submit_view, name='submit'),
     path('prob/', views.prob_view, name='prob'),
     path('level/', views.level_view, name='level'),

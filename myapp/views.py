@@ -6,7 +6,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.http import HttpResponse,JsonResponse
 from django.shortcuts import render, redirect
 from django.views.decorators.csrf import csrf_exempt
-from django.db import connection
+from django.db import connection, transaction
 from django.db import IntegrityError
 from django.http import JsonResponse
 from decouple import config
@@ -47,11 +47,11 @@ def level_view(request):
     if request.method == "POST":
         data = json.loads(request.body)
         level = data.get('level')
-        print('level: ',level)
         with connection.cursor() as cursor:
             query = "SELECT * FROM problem WHERE level=%s"
             cursor.execute(query, [level])
             problems = cursor.fetchall()
+           # print('levels: ',problems)
         if problems:
             fields = ['level','p_id','prob_name', 'prob_desc', 'percent', 'prob_input','prob_output']
             problem_list = [dict(zip(fields,problem)) for problem in problems]
@@ -59,27 +59,88 @@ def level_view(request):
             
     else:
         return HttpResponse("Method Not Allowed1", status=405)
-    
+
 @csrf_exempt
 def prob_view(request):
     if request.method == "POST":
         data = json.loads(request.body)
-        p_id = data.get('p_id')  # pid를 p_id로 변경했습니다.
-        print('p_id: ', p_id)
+        p_id = data.get('p_id')
         with connection.cursor() as cursor:
             query = "SELECT * FROM problem WHERE p_id=%s"
             cursor.execute(query, [p_id])
             problems = cursor.fetchall()
+           # print('problems: ',problems)
         if p_id:
             if problems:
                 fields = ['level', 'p_id', 'prob_name', 'prob_desc', 'percent', 'prob_input', 'prob_output']
                 problem_dict = dict(zip(fields, problems[0]))  # 가정: p_id는 unique하므로, 첫 번째 결과만 가져옵니다.
+                print(problem_dict)
+                cursor.close()
                 return JsonResponse(problem_dict, safe=False)
             else:
+                cursor.close()
                 return JsonResponse({"error": "Problem with id {} not found.".format(p_id)}, status=404)
     else:
         return HttpResponse("Method Not Allowed", status=405)
     
+@csrf_exempt
+def rank_view(request):
+    if request.method == "GET":
+        with connection.cursor() as cursor:
+            query = "SELECT username, university, point FROM Users ORDER BY point DESC"
+            cursor.execute(query)
+            users = cursor.fetchall()
+            if users:
+                fields = ['username', 'university', 'point']
+                users_dict = [dict(zip(fields, user)) for user in users]
+                print(users_dict)
+                return JsonResponse(users_dict, safe=False)
+            else:
+                return JsonResponse({"status": "error","message": "fail"})
+        
+    else:
+        return HttpResponse("Method Not Allowed", status=405) 
+        
+    
+# @csrf_exempt
+# def checkwrong_view(request):
+#     if request.method == "POST":
+#         data = json.loads(request.body)
+#         print('data: ',data)
+#         id = data.get('id')
+#         p_id = data.get('p_id')
+#         with connection.cursor() as cursor:
+#             query = "SELECT answer from try WHERE id=%s AND p_id=%s"
+#             cursor.execute(query, [id, p_id])
+#             answer = cursor.fetchall()
+#             print('answer: ',answer)
+            
+#             return JsonResponse({"status": "success","message": answer})
+#     else:
+#         return HttpResponse("Method Not Allowed", status=405)
+   
+@csrf_exempt
+def wrong_view(request):
+    if request.method == "POST":
+        data = json.loads(request.body)
+        id = data.get('id')
+        print(request.body)
+        with connection.cursor() as cursor:
+            query = "SELECT level, try.p_id, prob_name,prob_desc, percent FROM try JOIN problem ON try.p_id=problem.p_id WHERE correct='false' AND id=%s"
+            
+            cursor.execute(query, [id])
+            w_problems = cursor.fetchall()
+            print(w_problems)
+            if w_problems:
+                fields = ['level', 'p_id', 'prob_name', 'prob_desc', 'percent']
+                problem_dicts = [dict(zip(fields, problem)) for problem in w_problems]    
+                print(problem_dicts)
+                return JsonResponse(problem_dicts, safe=False)
+            else:
+                return JsonResponse({"error": "Problem with id {} not found.".format(id)}, status=404)
+    else:
+        return HttpResponse("Method Not Allowed", status=405)
+        
 
 @csrf_exempt
 def submit_view(request):
@@ -96,32 +157,46 @@ def submit_view(request):
             result = cursor.fetchall()
             
             if type=='submit':
-                prompt = '문제는 다음과 같아.'+result[0][3]+'다음은 내가 작성한 코드야.'+answer+'이 코드가 정답이면 True, 정답이 아니면 False로만 대답해줘.'
+                prompt = '문제는 다음과 같아.'+result[0][3]+'다음은 내가 작성한 코드야.'+answer+'이 코드가 맞는 답을 출력하면 True라는 글자로, 그렇지 않으면 False라는 글자로만 대답해줘.'
                 res = generate_text(prompt)
                 content_value = res['choices'][0]['message']['content']
                 print('submit: ', content_value)
-                if (content_value.find('True')!=-1):
-                    return JsonResponse({"status": "success","message": "success"})
+                if (content_value.find('True')!=-1):      
+                    try:
+                        with transaction.atomic():
+                            #cursor.execute("INSERT INTO try (p_id, id, correct, answer) VALUES (%s, %s, %s, %s)", [p_id, id, 'true', answer])
+                            #_query = "UPDATE Users set point = point+10 WHERE id=%s"
+                            #cursor.execute(_query, [id])
+                            cursor.execute("INSERT INTO try (id, p_id, correct, answer) VALUES (%s, %s, %s, %s) ON DUPLICATE KEY UPDATE answer = VALUES(answer), correct = VALUES(correct)", [id, p_id, 'true', answer])
+                        return JsonResponse({"status": "success","message": "success"})
+                    except Exception as e:
+                        return JsonResponse({"status": "error", "message": str(e)})
+    
                 else:
-                    return JsonResponse({"status": "error", "message": "fail"})
+                    #try테이블에 insert
+                    try:
+                        with transaction.atomic():
+                            cursor.execute("INSERT INTO try (id, p_id, correct, answer) VALUES (%s, %s, %s, %s) ON DUPLICATE KEY UPDATE answer = VALUES(answer), correct = VALUES(correct)", [id, p_id, 'false', answer])
+                        return JsonResponse({"status": "error","message": "fail"})
+                    except Exception as e:
+                        return JsonResponse({"status": "error", "message": str(e)})
                 
             elif type=='refactoring':
-                prompt = '문제는 다음과 같아.'+result[0][3]+'다음은 내가 작성한 코드야.'+answer+'이 코드를 refactoring하거나 최적화된 방법이 있다면 그 방법을 사용해서 코드를 다시 재 작성해줘.'
+                prompt = '문제는 다음과 같아.'+result[0][3]+'다음은 내가 작성한 코드야.'+answer+'이 코드를 refactoring하거나 가장 최적화된 방법을 사용해서 코드를 직접 다시 작성해줘.'
                 res = generate_text(prompt)
                 content_value = res['choices'][0]['message']['content']
                 print('refactoring: ', content_value)
                 return JsonResponse({"status": "success","content": content_value})
                 
             else: #hint
-                prompt = '문제는 다음과 같아.'+result[0][3]+'다음은 내가 작성한 코드야.'+answer+'이 코드가 정답이 아니면 어떻게 고쳐야 하는지 말로 hint만 알려주고, 풀이 코드는 절대 작성해서 보내지마.'
+                prompt = '문제는 다음과 같아.'+result[0][3]+'다음은 내가 작성한 코드야.'+answer+'이 코드가 틀렸다면 틀린 부분에 대한 글로된 30자 이내의 간단한 힌트를 작성해줘.'
                 res = generate_text(prompt)
                 content_value = res['choices'][0]['message']['content']
                 print('hint: ', content_value)
                 return JsonResponse({"status": "success","content": content_value})
 
     else:
-        return HttpResponse("Method Not Allowed", status=405)
-            
+        return HttpResponse("Method Not Allowed", status=405)    
             
 
 @csrf_exempt
