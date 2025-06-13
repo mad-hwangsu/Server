@@ -1,0 +1,23 @@
+.env
+*.pyc
+__pycache__/
+db.sqlite3
+venv/
+.DS_Store
+
+# Virtual environment files
+bin/
+lib/
+lib64
+share/
+pyvenv.cfg
+get-pip.py
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
